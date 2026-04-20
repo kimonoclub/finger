@@ -2,39 +2,39 @@
 <html lang="ja">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AI 2D:4D比 計測ツール</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <style>
-        body { margin: 0; background: #2c3e50; color: white; font-family: sans-serif; text-align: center; overflow: hidden; }
-        #container { position: relative; width: 100vw; height: 65vh; background: #000; }
-        video, canvas { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 100%; height: 100%; object-fit: contain; }
-        #ui { padding: 15px; height: 35vh; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; align-items: center; }
-        .result-box { background: rgba(0,0,0,0.3); padding: 10px 30px; border-radius: 15px; border: 2px solid #f1c40f; min-width: 200px; transition: all 0.3s; }
-        .val { font-size: 3rem; color: #f1c40f; font-weight: bold; line-height: 1.2; }
-        .status { font-size: 0.9rem; margin-top: 5px; height: 1.2em; }
-        .guide { font-size: 0.8rem; color: #bdc3c7; margin-bottom: 10px; }
-        .btn-hold { margin-top: 15px; padding: 12px 25px; font-size: 1rem; border-radius: 50px; border: none; background: #e67e22; color: white; cursor: pointer; font-weight: bold; }
+        body { margin: 0; background: #2c3e50; color: white; font-family: sans-serif; text-align: center; overflow: hidden; position: fixed; width: 100%; }
+        #container { position: relative; width: 100vw; height: 60vh; background: #000; overflow: hidden; }
+        /* ビデオ自体は見えないようにし、キャンバスに描画したものだけを見せる */
+        video { position: absolute; width: 1px; height: 1px; opacity: 0; }
+        canvas { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 100%; height: 100%; object-fit: contain; }
+        #ui { padding: 10px; height: 40vh; box-sizing: border-box; display: flex; flex-direction: column; justify-content: flex-start; align-items: center; }
+        .result-box { background: rgba(0,0,0,0.3); padding: 10px 20px; border-radius: 15px; border: 2px solid #f1c40f; min-width: 220px; }
+        .val { font-size: 2.8rem; color: #f1c40f; font-weight: bold; }
+        .status { font-size: 0.8rem; margin-top: 5px; }
+        .btn-hold { margin-top: 10px; padding: 15px 30px; font-size: 1rem; border-radius: 50px; border: none; background: #e67e22; color: white; font-weight: bold; }
         .btn-hold.active { background: #2ecc71; }
     </style>
 </head>
 <body>
 
     <div id="container">
-        <video id="input_video" playsinline></video>
+        <video id="input_video" playsinline webkit-playsinline muted></video>
         <canvas id="output_canvas"></canvas>
     </div>
 
     <div id="ui">
-        <div class="guide">右手をパーにしてカメラにかざしてください</div>
+        <p style="font-size: 0.8rem; margin: 5px 0;">右手をカメラにかざしてください</p>
         <div class="result-box" id="box">
-            <div style="font-size: 0.8rem;">推定 2D:4D比 (移動平均)</div>
+            <div style="font-size: 0.7rem;">推定 2D:4D比</div>
             <div id="ratio_val" class="val">--</div>
-            <div id="status_text" class="status">手を検知中...</div>
+            <div id="status_text" class="status">解析中...</div>
         </div>
         <button class="btn-hold" id="hold_btn" onclick="toggleHold()">数値を固定する</button>
-        <p style="font-size: 0.7rem; color: #95a5a6; margin-top: 10px;">画面タップでも固定/解除が可能です</p>
     </div>
 
     <script>
@@ -44,47 +44,35 @@
         const ratioDisplay = document.getElementById('ratio_val');
         const statusDisplay = document.getElementById('status_text');
         const holdBtn = document.getElementById('hold_btn');
-        const resultBox = document.getElementById('box');
 
         let ratioHistory = [];
-        const windowSize = 20; // 平均化するフレーム数
+        const windowSize = 15;
         let isPaused = false;
 
-        // ホールド機能の切り替え
         function toggleHold() {
             isPaused = !isPaused;
-            if (isPaused) {
-                holdBtn.innerText = "再開する";
-                holdBtn.classList.add('active');
-                resultBox.style.borderColor = "#2ecc71";
-            } else {
-                holdBtn.innerText = "数値を固定する";
-                holdBtn.classList.remove('active');
-                resultBox.style.borderColor = "#f1c40f";
-                ratioHistory = []; // 再開時に履歴をリセットして反応を良くする
-            }
+            holdBtn.innerText = isPaused ? "再開する" : "数値を固定する";
+            holdBtn.classList.toggle('active', isPaused);
+            if (!isPaused) ratioHistory = [];
         }
-
-        // 画面タップでも操作可能にする
-        window.addEventListener('click', (e) => {
-            if(e.target.tagName !== 'BUTTON') toggleHold();
-        });
 
         function onResults(results) {
             if (isPaused) return;
-
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            
+            // 左右反転させて鏡のような動きにする
+            canvasCtx.translate(canvasElement.width, 0);
+            canvasCtx.scale(-1, 1);
             canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.setTransform(1, 0, 0, 1, 0, 0);
 
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
-                const getPx = (lm) => ({ x: lm.x * canvasElement.width, y: lm.y * canvasElement.height });
-                
-                const p5 = getPx(landmarks[5]);  // 人差し指付け根
-                const p8 = getPx(landmarks[8]);  // 人差し指先
-                const p13 = getPx(landmarks[13]); // 薬指付け根
-                const p16 = getPx(landmarks[16]); // 薬指先
+                const getPx = (lm) => ({ x: (1 - lm.x) * canvasElement.width, y: lm.y * canvasElement.height });
+
+                const p5 = getPx(landmarks[5]);  const p8 = getPx(landmarks[8]);
+                const p13 = getPx(landmarks[13]); const p16 = getPx(landmarks[16]);
 
                 const dist2D = Math.hypot(p8.x - p5.x, p8.y - p5.y);
                 const dist4D = Math.hypot(p16.x - p13.x, p16.y - p13.y);
@@ -93,38 +81,24 @@
                     const currentRatio = dist2D / dist4D;
                     ratioHistory.push(currentRatio);
                     if (ratioHistory.length > windowSize) ratioHistory.shift();
+                    const avg = ratioHistory.reduce((a, b) => a + b) / ratioHistory.length;
                     
-                    const averageRatio = ratioHistory.reduce((a, b) => a + b) / ratioHistory.length;
+                    ratioDisplay.innerText = avg.toFixed(3);
                     
-                    // 分散を計算して安定度を判定
-                    const variance = ratioHistory.reduce((a, b) => a + Math.pow(b - averageRatio, 2), 0) / ratioHistory.length;
-
-                    if (ratioHistory.length >= windowSize && variance < 0.00005) {
-                        ratioDisplay.style.color = "#2ecc71";
-                        statusDisplay.innerText = "● 数値が安定しています";
-                    } else {
-                        ratioDisplay.style.color = "#f1c40f";
-                        statusDisplay.innerText = "計測中...";
-                    }
-                    
-                    ratioDisplay.innerText = averageRatio.toFixed(3);
-
-                    // 補助線の描画
-                    canvasCtx.lineWidth = 5;
+                    // 補助線描画
+                    canvasCtx.lineWidth = 8;
                     canvasCtx.lineCap = "round";
-                    canvasCtx.strokeStyle = "#3498db"; // 人差し指：青
+                    canvasCtx.strokeStyle = "#3498db"; 
                     canvasCtx.beginPath(); canvasCtx.moveTo(p5.x, p5.y); canvasCtx.lineTo(p8.x, p8.y); canvasCtx.stroke();
-                    canvasCtx.strokeStyle = "#e74c3c"; // 薬指：赤
+                    canvasCtx.strokeStyle = "#e74c3c";
                     canvasCtx.beginPath(); canvasCtx.moveTo(p13.x, p13.y); canvasCtx.lineTo(p16.x, p16.y); canvasCtx.stroke();
                 }
-            } else {
-                statusDisplay.innerText = "手をカメラにかざしてください";
             }
             canvasCtx.restore();
         }
 
         const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7, selfieMode: true });
         hands.onResults(onResults);
 
         const camera = new Camera(videoElement, {
